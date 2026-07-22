@@ -1,5 +1,6 @@
+'use client';
+
 import React, { useMemo, useRef, useState } from 'react';
-import { createRoot } from 'react-dom/client';
 import {
   ArrowDownToLine,
   CalendarDays,
@@ -13,7 +14,6 @@ import {
   UsersRound,
   WalletCards
 } from 'lucide-react';
-import './styles.css';
 
 const STORAGE_KEY = 'velvetember-trip-split:v1';
 
@@ -132,7 +132,7 @@ function ledgerName(key, people) {
   return people[key];
 }
 
-function App() {
+export default function Page() {
   const [trip, setTrip] = useState(loadState);
   const [form, setForm] = useState({
     payer: 'you',
@@ -449,5 +449,3 @@ function App() {
     </main>
   );
 }
-
-createRoot(document.getElementById('root')).render(<App />);

@@ -1,14 +1,17 @@
 {
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
-    "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "dev": "vinext dev --hostname 0.0.0.0",
+    "build": "vinext build && node scripts/prepare-sites-build.mjs",
+    "start": "vinext start --hostname 0.0.0.0"
   },
   "dependencies": {
+    "@vitejs/plugin-rsc": "latest",
     "@vitejs/plugin-react": "latest",
-    "vite": "latest",
-    "react": "latest",
     "react-dom": "latest",
+    "react-server-dom-webpack": "latest",
+    "react": "latest",
+    "vinext": "latest",
+    "vite": "latest",
     "lucide-react": "latest"
   },
   "devDependencies": {}
