@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createClient } from '@supabase/supabase-js';
 import {
   ArrowRight,
   CalendarDays,
@@ -60,10 +61,6 @@ function loadState() {
   } catch {
     return seedState;
   }
-}
-
-function saveState(nextState) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
 }
 
 function money(value) {
@@ -143,8 +140,19 @@ function initials(name) {
   return name.slice(0, 1).toUpperCase();
 }
 
+function normalizeExpense(expense) {
+  return {
+    id: expense.id || crypto.randomUUID(),
+    payer: PERSON_BY_ID[expense.payer] ? expense.payer : 'rajesh',
+    amount: Number(expense.amount) || 0,
+    date: expense.date || new Date().toISOString().slice(0, 10),
+    category: categories.includes(expense.category) ? expense.category : 'Other',
+    note: expense.note || 'Trip expense'
+  };
+}
+
 export default function Page() {
-  const [trip, setTrip] = useState(loadState);
+  const [trip, setTrip] = useState({ expenses: [] });
   const [form, setForm] = useState({
     payer: 'rajesh',
     amount: '',
@@ -153,26 +161,79 @@ export default function Page() {
     note: ''
   });
   const [toast, setToast] = useState('');
+  const [syncStatus, setSyncStatus] = useState('connecting');
+  const [isSaving, setIsSaving] = useState(false);
   const fileInput = useRef(null);
+  const supabaseRef = useRef(null);
 
   const ledger = useMemo(() => computeLedger(trip.expenses), [trip.expenses]);
   const latestExpenses = [...trip.expenses].sort((a, b) => `${b.date}${b.id}`.localeCompare(`${a.date}${a.id}`));
   const leadingSettlement = ledger.settlements[0];
 
-  function updateTrip(updater) {
-    setTrip((current) => {
-      const next = typeof updater === 'function' ? updater(current) : updater;
-      saveState(next);
-      return next;
-    });
-  }
+  useEffect(() => {
+    let active = true;
+    let channel;
+
+    async function connectSharedLedger() {
+      try {
+        const response = await fetch('/api/config', { cache: 'no-store' });
+        const config = await response.json();
+        if (!config.supabaseUrl || !config.supabasePublishableKey) throw new Error('Missing shared ledger configuration');
+
+        const client = createClient(config.supabaseUrl, config.supabasePublishableKey);
+        supabaseRef.current = client;
+        const { data, error } = await client.from('trip_expenses').select('*').order('created_at', { ascending: false });
+        if (error) throw error;
+
+        let remoteExpenses = (data || []).map(normalizeExpense);
+        const localExpenses = loadState().expenses.map(normalizeExpense);
+        if (!remoteExpenses.length && localExpenses.length) {
+          const { data: migrated, error: migrationError } = await client
+            .from('trip_expenses')
+            .upsert(localExpenses, { onConflict: 'id' })
+            .select();
+          if (migrationError) throw migrationError;
+          remoteExpenses = (migrated || localExpenses).map(normalizeExpense);
+        }
+
+        if (!active) return;
+        setTrip({ expenses: remoteExpenses });
+        channel = client
+          .channel('trip-expenses')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'trip_expenses' }, (payload) => {
+            if (!active) return;
+            if (payload.eventType === 'DELETE') {
+              setTrip((current) => ({ ...current, expenses: current.expenses.filter((expense) => expense.id !== payload.old.id) }));
+              return;
+            }
+            const incoming = normalizeExpense(payload.new);
+            setTrip((current) => ({
+              ...current,
+              expenses: [incoming, ...current.expenses.filter((expense) => expense.id !== incoming.id)]
+            }));
+          })
+          .subscribe((status) => {
+            if (!active) return;
+            setSyncStatus(status === 'SUBSCRIBED' ? 'live' : status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' ? 'error' : 'connecting');
+          });
+      } catch {
+        if (active) setSyncStatus('error');
+      }
+    }
+
+    connectSharedLedger();
+    return () => {
+      active = false;
+      if (channel && supabaseRef.current) supabaseRef.current.removeChannel(channel);
+    };
+  }, []);
 
   function flash(message) {
     setToast(message);
     window.setTimeout(() => setToast(''), 2200);
   }
 
-  function addExpense(event) {
+  async function addExpense(event) {
     event.preventDefault();
     const amount = Number(form.amount);
     if (!amount || amount <= 0) {
@@ -180,24 +241,48 @@ export default function Page() {
       return;
     }
 
-    updateTrip((current) => ({
-      ...current,
-      expenses: [{
-        id: crypto.randomUUID(),
-        payer: form.payer,
-        amount,
-        date: form.date || new Date().toISOString().slice(0, 10),
-        category: form.category,
-        note: form.note.trim() || form.category
-      }, ...current.expenses]
-    }));
-    setForm((current) => ({ ...current, amount: '', note: '' }));
-    flash('Expense added to the trip.');
+    if (!supabaseRef.current) {
+      flash('The shared ledger is still connecting.');
+      return;
+    }
+
+    const expense = {
+      id: crypto.randomUUID(),
+      payer: form.payer,
+      amount,
+      date: form.date || new Date().toISOString().slice(0, 10),
+      category: form.category,
+      note: form.note.trim() || form.category
+    };
+
+    setIsSaving(true);
+    try {
+      const { data, error } = await supabaseRef.current.from('trip_expenses').insert(expense).select().single();
+      if (error) throw error;
+      const saved = normalizeExpense(data);
+      setTrip((current) => ({ ...current, expenses: [saved, ...current.expenses.filter((item) => item.id !== saved.id)] }));
+      setForm((current) => ({ ...current, amount: '', note: '' }));
+      flash('Expense shared with the crew.');
+    } catch {
+      flash('Could not save that expense. Try again.');
+    } finally {
+      setIsSaving(false);
+    }
   }
 
-  function removeExpense(id) {
-    updateTrip((current) => ({ ...current, expenses: current.expenses.filter((expense) => expense.id !== id) }));
-    flash('Expense removed.');
+  async function removeExpense(id) {
+    if (!supabaseRef.current) return;
+    setIsSaving(true);
+    try {
+      const { error } = await supabaseRef.current.from('trip_expenses').delete().eq('id', id);
+      if (error) throw error;
+      setTrip((current) => ({ ...current, expenses: current.expenses.filter((expense) => expense.id !== id) }));
+      flash('Expense removed for everyone.');
+    } catch {
+      flash('Could not remove that expense.');
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   function exportData() {
@@ -227,8 +312,12 @@ export default function Page() {
           category: categories.includes(expense.category) ? expense.category : 'Other',
           note: expense.note || 'Imported expense'
         }));
-        updateTrip({ expenses });
-        flash('Backup restored.');
+        if (!supabaseRef.current) throw new Error('Not connected');
+        supabaseRef.current.from('trip_expenses').upsert(expenses, { onConflict: 'id' }).then(({ error }) => {
+          if (error) throw error;
+          setTrip((current) => ({ ...current, expenses: [...expenses, ...current.expenses.filter((expense) => !expenses.some((item) => item.id === expense.id))] }));
+          flash('Backup merged into the shared ledger.');
+        }).catch(() => flash('That backup could not be saved.'));
       } catch {
         flash('That backup could not be read.');
       } finally {
@@ -265,7 +354,7 @@ export default function Page() {
 
       <section className="summary-grid" aria-label="Trip summary">
         <article className="summary-card total-card">
-          <div className="summary-heading"><span><WalletCards size={17} /> Total spent</span><span className="live-dot">Live</span></div>
+          <div className="summary-heading"><span><WalletCards size={17} /> Total spent</span><span className={`live-dot ${syncStatus}`}>{syncStatus === 'live' ? 'Live' : syncStatus === 'error' ? 'Offline' : 'Syncing'}</span></div>
           <strong>{money(ledger.total)}</strong>
           <small>{trip.expenses.length} expense{trip.expenses.length === 1 ? '' : 's'} logged</small>
           <div className="summary-decoration" aria-hidden="true" />
@@ -278,7 +367,7 @@ export default function Page() {
         <article className="summary-card">
           <div className="summary-heading"><span><Check size={17} /> Settle up</span></div>
           <strong>{leadingSettlement ? money(leadingSettlement.amount) : 'All clear'}</strong>
-          <small>{leadingSettlement ? `${groupName(leadingSettlement.from)} pays ${groupName(leadingSettlement.to)}` : 'No payments needed right now.'}</small>
+          <small>{leadingSettlement ? `${groupName(leadingSettlement.from)} owes ${groupName(leadingSettlement.to)}` : 'No payments needed right now.'}</small>
         </article>
       </section>
 
@@ -313,20 +402,20 @@ export default function Page() {
               What was it for?
               <input value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} placeholder="Dinner, cab, hotel..." />
             </label>
-            <button className="primary-button" type="submit"><Plus size={18} /> Add expense</button>
+            <button className="primary-button" type="submit" disabled={isSaving || syncStatus === 'error'}><Plus size={18} /> {isSaving ? 'Saving...' : 'Add expense'}</button>
           </form>
-          <p className="panel-note">Rajesh & Kavya, and Shiva & Anusha settle together. No partner-to-partner payments.</p>
+          <p className="panel-note">Rajesh & Kavya, and Shiva & Anusha settle together. Changes sync live for the whole crew.</p>
         </aside>
 
         <div className="main-column">
           <section className="section-block">
-            <div className="section-heading"><div><p className="eyebrow">Settle up</p><h2>Suggested payments</h2></div><span>{ledger.settlements.length} transfer{ledger.settlements.length === 1 ? '' : 's'}</span></div>
+            <div className="section-heading"><div><p className="eyebrow">Settle up</p><h2>Who owes whom</h2></div><span>{ledger.settlements.length} payment{ledger.settlements.length === 1 ? '' : 's'}</span></div>
             <div className="settlement-list">
               {ledger.settlements.length ? ledger.settlements.map((row, index) => (
                 <article className="settlement-row" key={`${row.from}-${row.to}-${index}`}>
-                  <div className="transfer-party"><span className="transfer-avatar">{initials(groupName(row.from))}</span><strong>{groupName(row.from)}</strong></div>
+                  <div className="transfer-party"><span className="transfer-avatar">{initials(groupName(row.from))}</span><div><strong>{groupName(row.from)}</strong><small>owes</small></div></div>
                   <ArrowRight className="transfer-arrow" size={19} />
-                  <div className="transfer-party"><span className="transfer-avatar receive">{initials(groupName(row.to))}</span><strong>{groupName(row.to)}</strong></div>
+                  <div className="transfer-party"><span className="transfer-avatar receive">{initials(groupName(row.to))}</span><div><strong>{groupName(row.to)}</strong><small>to receive</small></div></div>
                   <b>{money(row.amount)}</b>
                 </article>
               )) : <div className="empty-state"><Check size={22} /><span>Everything is square. Lovely.</span></div>}

@@ -64,8 +64,16 @@ function responseFor(pathname) {
 }
 
 export default {
-  fetch(request) {
+  fetch(request, env) {
     const url = new URL(request.url);
+    if (url.pathname === '/api/config') {
+      return new Response(JSON.stringify({
+        supabaseUrl: env.SUPABASE_URL || '',
+        supabasePublishableKey: env.SUPABASE_PUBLISHABLE_KEY || ''
+      }), {
+        headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
+      });
+    }
     const pathname = url.pathname === '/' ? '/index.html' : url.pathname;
     return responseFor(pathname);
   }
