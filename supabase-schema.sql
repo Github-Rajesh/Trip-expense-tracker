@@ -9,6 +9,9 @@ create table if not exists public.trip_expenses (
   created_at timestamptz not null default now()
 );
 
+alter table public.trip_expenses
+add column if not exists total_amount numeric(12, 2) not null default 0 check (total_amount >= 0);
+
 alter table public.trip_expenses enable row level security;
 
 create policy "Trip crew can read expenses"
