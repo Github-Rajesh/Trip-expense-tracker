@@ -3,17 +3,14 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "vinext dev --hostname 0.0.0.0",
-    "build": "vinext build && node scripts/prepare-sites-build.mjs",
-    "start": "vinext start --hostname 0.0.0.0"
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build && node scripts/prepare-sites-build.mjs",
+    "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
-    "@vitejs/plugin-rsc": "latest",
     "@vitejs/plugin-react": "latest",
     "react-dom": "latest",
-    "react-server-dom-webpack": "latest",
     "react": "latest",
-    "vinext": "latest",
     "vite": "latest",
     "lucide-react": "latest"
   },
