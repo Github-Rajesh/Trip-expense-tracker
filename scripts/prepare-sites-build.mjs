@@ -5,7 +5,7 @@ await mkdir('dist/.openai', { recursive: true });
 
 await writeFile(
   'dist/server/index.js',
-  "export { default } from './index.mjs';\n",
+  "import handler from './index.mjs';\n\nexport default { fetch: handler };\n",
   'utf8'
 );
 
