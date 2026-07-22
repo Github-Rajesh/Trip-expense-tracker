@@ -83,14 +83,17 @@ function groupName(id) {
 function computeLedger(expenses) {
   const personBalances = Object.fromEntries(PEOPLE.map((person) => [person.id, 0]));
   let total = 0;
+  let paidTotal = 0;
 
   expenses.forEach((expense) => {
     const amount = Number(expense.amount) || 0;
+    const billAmount = Number(expense.billAmount) || 0;
     if (amount <= 0 || !PERSON_BY_ID[expense.payer]) return;
 
-    total += amount;
+    total += billAmount;
+    paidTotal += amount;
     personBalances[expense.payer] += amount;
-    const share = amount / PEOPLE.length;
+    const share = billAmount / PEOPLE.length;
     PEOPLE.forEach((person) => {
       personBalances[person.id] -= share;
     });
@@ -103,9 +106,11 @@ function computeLedger(expenses) {
 
   return {
     total,
+    paidTotal,
+    pendingTotal: Math.max(0, total - paidTotal),
     personBalances,
     groupBalances,
-    settlements: settleBalances(groupBalances)
+    settlements: total - paidTotal > 0.5 ? [] : settleBalances(groupBalances)
   };
 }
 
@@ -145,9 +150,23 @@ function normalizeExpense(expense) {
     id: expense.id || crypto.randomUUID(),
     payer: PERSON_BY_ID[expense.payer] ? expense.payer : 'rajesh',
     amount: Number(expense.amount) || 0,
+    billAmount: Number(expense.total_amount ?? expense.amount) || 0,
     date: expense.date || new Date().toISOString().slice(0, 10),
     category: categories.includes(expense.category) ? expense.category : 'Other',
     note: expense.note || 'Trip expense'
+  };
+}
+
+function toRecord(expense) {
+  const normalized = normalizeExpense(expense);
+  return {
+    id: normalized.id,
+    payer: normalized.payer,
+    amount: normalized.amount,
+    total_amount: normalized.billAmount,
+    date: normalized.date,
+    category: normalized.category,
+    note: normalized.note
   };
 }
 
@@ -156,6 +175,8 @@ export default function Page() {
   const [form, setForm] = useState({
     payer: 'rajesh',
     amount: '',
+    billAmount: '',
+    paymentOnly: false,
     date: new Date().toISOString().slice(0, 10),
     category: 'Food',
     note: ''
@@ -190,7 +211,7 @@ export default function Page() {
         if (!remoteExpenses.length && localExpenses.length) {
           const { data: migrated, error: migrationError } = await client
             .from('trip_expenses')
-            .upsert(localExpenses, { onConflict: 'id' })
+            .upsert(localExpenses.map(toRecord), { onConflict: 'id' })
             .select();
           if (migrationError) throw migrationError;
           remoteExpenses = (migrated || localExpenses).map(normalizeExpense);
@@ -250,6 +271,7 @@ export default function Page() {
       id: crypto.randomUUID(),
       payer: form.payer,
       amount,
+      total_amount: form.paymentOnly ? 0 : Number(form.billAmount) || amount,
       date: form.date || new Date().toISOString().slice(0, 10),
       category: form.category,
       note: form.note.trim() || form.category
@@ -261,7 +283,7 @@ export default function Page() {
       if (error) throw error;
       const saved = normalizeExpense(data);
       setTrip((current) => ({ ...current, expenses: [saved, ...current.expenses.filter((item) => item.id !== saved.id)] }));
-      setForm((current) => ({ ...current, amount: '', note: '' }));
+      setForm((current) => ({ ...current, amount: '', billAmount: '', note: '', paymentOnly: false }));
       flash('Expense shared with the crew.');
     } catch {
       flash('Could not save that expense. Try again.');
@@ -304,16 +326,9 @@ export default function Page() {
       try {
         const imported = JSON.parse(reader.result);
         if (!Array.isArray(imported.expenses)) throw new Error('Invalid file');
-        const expenses = imported.expenses.map((expense) => ({
-          id: expense.id || crypto.randomUUID(),
-          payer: PERSON_BY_ID[expense.payer] ? expense.payer : 'rajesh',
-          amount: Number(expense.amount) || 0,
-          date: expense.date || new Date().toISOString().slice(0, 10),
-          category: categories.includes(expense.category) ? expense.category : 'Other',
-          note: expense.note || 'Imported expense'
-        }));
+        const expenses = imported.expenses.map(normalizeExpense);
         if (!supabaseRef.current) throw new Error('Not connected');
-        supabaseRef.current.from('trip_expenses').upsert(expenses, { onConflict: 'id' }).then(({ error }) => {
+        supabaseRef.current.from('trip_expenses').upsert(expenses.map(toRecord), { onConflict: 'id' }).then(({ error }) => {
           if (error) throw error;
           setTrip((current) => ({ ...current, expenses: [...expenses, ...current.expenses.filter((expense) => !expenses.some((item) => item.id === expense.id))] }));
           flash('Backup merged into the shared ledger.');
@@ -360,14 +375,14 @@ export default function Page() {
           <div className="summary-decoration" aria-hidden="true" />
         </article>
         <article className="summary-card">
-          <div className="summary-heading"><span><UsersRound size={17} /> Per person</span></div>
-          <strong>{money(ledger.total / PEOPLE.length)}</strong>
-          <small>Every expense is split equally by five.</small>
+          <div className="summary-heading"><span><UsersRound size={17} /> Paid so far</span></div>
+          <strong>{money(ledger.paidTotal)}</strong>
+          <small>Final share per person: {money(ledger.total / PEOPLE.length)}</small>
         </article>
         <article className="summary-card">
-          <div className="summary-heading"><span><Check size={17} /> Settle up</span></div>
-          <strong>{leadingSettlement ? money(leadingSettlement.amount) : 'All clear'}</strong>
-          <small>{leadingSettlement ? `${groupName(leadingSettlement.from)} owes ${groupName(leadingSettlement.to)}` : 'No payments needed right now.'}</small>
+          <div className="summary-heading"><span><Check size={17} /> {ledger.pendingTotal ? 'Still unpaid' : 'Settle up'}</span></div>
+          <strong>{ledger.pendingTotal ? money(ledger.pendingTotal) : leadingSettlement ? money(leadingSettlement.amount) : 'All clear'}</strong>
+          <small>{ledger.pendingTotal ? 'Finish paying the bills before settling among friends.' : leadingSettlement ? `${groupName(leadingSettlement.from)} owes ${groupName(leadingSettlement.to)}` : 'No payments needed right now.'}</small>
         </article>
       </section>
 
@@ -385,9 +400,14 @@ export default function Page() {
               </select>
             </label>
             <label>
-              Amount
+              Amount paid now
               <div className="amount-field"><CircleDollarSign size={18} /><input inputMode="decimal" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} placeholder="5,000" /></div>
             </label>
+            <label>
+              Full bill total
+              <div className="amount-field"><CircleDollarSign size={18} /><input inputMode="decimal" value={form.billAmount} onChange={(event) => setForm({ ...form, billAmount: event.target.value })} placeholder="Leave blank when paid in full" disabled={form.paymentOnly} /></div>
+            </label>
+            <label className="payment-toggle"><input type="checkbox" checked={form.paymentOnly} onChange={(event) => setForm({ ...form, paymentOnly: event.target.checked, billAmount: '' })} /> This is a later payment for an existing bill</label>
             <div className="form-row">
               <label>
                 Date
@@ -404,14 +424,14 @@ export default function Page() {
             </label>
             <button className="primary-button" type="submit" disabled={isSaving || syncStatus === 'error'}><Plus size={18} /> {isSaving ? 'Saving...' : 'Add expense'}</button>
           </form>
-          <p className="panel-note">Rajesh & Kavya, and Shiva & Anusha settle together. Changes sync live for the whole crew.</p>
+          <p className="panel-note">For a partial bill, enter what was paid now and the full bill total. Add later payments with the checkbox on.</p>
         </aside>
 
         <div className="main-column">
           <section className="section-block">
             <div className="section-heading"><div><p className="eyebrow">Settle up</p><h2>Who owes whom</h2></div><span>{ledger.settlements.length} payment{ledger.settlements.length === 1 ? '' : 's'}</span></div>
             <div className="settlement-list">
-              {ledger.settlements.length ? ledger.settlements.map((row, index) => (
+              {ledger.pendingTotal ? <div className="empty-state"><ReceiptText size={22} /><span>{money(ledger.pendingTotal)} remains to be paid on the trip bills.</span></div> : ledger.settlements.length ? ledger.settlements.map((row, index) => (
                 <article className="settlement-row" key={`${row.from}-${row.to}-${index}`}>
                   <div className="transfer-party"><span className="transfer-avatar">{initials(groupName(row.from))}</span><div><strong>{groupName(row.from)}</strong><small>owes</small></div></div>
                   <ArrowRight className="transfer-arrow" size={19} />
@@ -444,7 +464,7 @@ export default function Page() {
                 return <article className="expense-row" key={expense.id}>
                   <span className="category-icon">{expense.category.slice(0, 1)}</span>
                 <div className="expense-main"><strong>{expense.note}</strong><small>{expense.category} &middot; {expense.date} &middot; paid by {person.name}</small></div>
-                  <div className="expense-amount"><strong>{money(expense.amount)}</strong><small>{money(expense.amount / PEOPLE.length)} each</small></div>
+                  <div className="expense-amount"><strong>{money(expense.amount)} paid</strong><small>{expense.billAmount ? `${money(expense.amount)} of ${money(expense.billAmount)} bill` : 'Later bill payment'}</small></div>
                   <button className="icon-button danger" type="button" onClick={() => removeExpense(expense.id)} aria-label={`Delete ${expense.note}`} title="Delete expense"><Trash2 size={17} /></button>
                 </article>;
               }) : <div className="empty-state"><ReceiptText size={22} /><span>Your first expense will appear here.</span></div>}

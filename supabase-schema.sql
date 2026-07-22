@@ -2,6 +2,7 @@ create table if not exists public.trip_expenses (
   id uuid primary key,
   payer text not null check (payer in ('rajesh', 'kavya', 'dhanu', 'shiva', 'anusha')),
   amount numeric(12, 2) not null check (amount > 0),
+  total_amount numeric(12, 2) not null default 0 check (total_amount >= 0),
   date date not null,
   category text not null,
   note text not null,
