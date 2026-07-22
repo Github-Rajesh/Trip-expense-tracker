@@ -1,4 +1,7 @@
 {
+  "name": "velvetember-trip-split",
+  "version": "1.0.0",
+  "private": true,
   "scripts": {
     "dev": "vinext dev --hostname 0.0.0.0",
     "build": "vinext build && node scripts/prepare-sites-build.mjs",
