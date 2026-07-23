@@ -199,6 +199,10 @@ export default function Page() {
     const total = stays.reduce((sum, expense) => sum + expense.billAmount, 0);
     const paid = stays.reduce((sum, expense) => sum + expense.amount, 0);
     const share = total / PEOPLE.length;
+    const groupBalances = Object.fromEntries(SETTLEMENT_GROUPS.map((group) => [group.id, -share * group.members.length]));
+    stays.forEach((expense) => {
+      groupBalances[GROUP_BY_MEMBER[expense.payer]] += expense.amount;
+    });
     const people = PEOPLE.map((person) => {
       const group = SETTLEMENT_GROUPS.find((item) => item.id === GROUP_BY_MEMBER[person.id]);
       const groupPaid = stays
@@ -207,7 +211,7 @@ export default function Page() {
       const groupDue = Math.max(0, share * group.members.length - groupPaid);
       return { ...person, paid: groupPaid, due: groupDue / group.members.length, isPair: group.members.length > 1 };
     });
-    return { total, paid, remaining: Math.max(0, total - paid), share, people };
+    return { total, paid, remaining: Math.max(0, total - paid), share, people, settlements: paid + 0.5 >= total ? settleBalances(groupBalances) : [] };
   }, [trip.expenses]);
   const latestExpenses = [...trip.expenses].sort((a, b) => `${b.date}${b.id}`.localeCompare(`${a.date}${a.id}`));
   const leadingSettlement = ledger.settlements[0];
@@ -424,6 +428,10 @@ export default function Page() {
             <span className={`avatar ${person.color}`}>{initials(person.name)}</span><div><strong>{person.name}</strong><small>{person.isPair ? `Pair paid ${money(person.paid)}` : `Paid ${money(person.paid)}`}</small></div><b>{person.due ? `${money(person.due)} due` : 'Covered'}</b>
           </article>)}
         </div>
+        {stayLedger.settlements.length ? <div className="stay-settlements">
+          <span>Stay reimbursements</span>
+          {stayLedger.settlements.map((row, index) => <div className="stay-settlement-row" key={`${row.from}-${row.to}-${index}`}><strong>{groupName(row.from)} owes {groupName(row.to)}</strong><b>{money(row.amount)}</b></div>)}
+        </div> : null}
       </section>
 
       <section className="dashboard">
