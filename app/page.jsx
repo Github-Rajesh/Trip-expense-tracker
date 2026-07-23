@@ -189,12 +189,17 @@ export default function Page() {
   const expensePanelRef = useRef(null);
   const supabaseRef = useRef(null);
 
-  const ledger = useMemo(() => computeLedger(trip.expenses), [trip.expenses]);
+  const ledger = useMemo(() => computeLedger(trip.expenses.filter((expense) => expense.category !== 'Stay')), [trip.expenses]);
   const stayLedger = useMemo(() => {
     const stays = trip.expenses.filter((expense) => expense.category === 'Stay');
     const total = stays.reduce((sum, expense) => sum + expense.billAmount, 0);
     const paid = stays.reduce((sum, expense) => sum + expense.amount, 0);
-    return { total, paid, remaining: Math.max(0, total - paid) };
+    const share = total / PEOPLE.length;
+    const people = PEOPLE.map((person) => {
+      const personPaid = stays.filter((expense) => expense.payer === person.id).reduce((sum, expense) => sum + expense.amount, 0);
+      return { ...person, paid: personPaid, due: Math.max(0, share - personPaid) };
+    });
+    return { total, paid, remaining: Math.max(0, total - paid), share, people };
   }, [trip.expenses]);
   const latestExpenses = [...trip.expenses].sort((a, b) => `${b.date}${b.id}`.localeCompare(`${a.date}${a.id}`));
   const leadingSettlement = ledger.settlements[0];
@@ -408,6 +413,11 @@ export default function Page() {
         <div className="stay-stat"><span>Advance paid</span><strong>{money(stayLedger.paid)}</strong></div>
         <div className="stay-stat due"><span>Still to pay</span><strong>{money(stayLedger.remaining)}</strong></div>
         <button className="stay-action" type="button" onClick={startStayPayment}><Plus size={17} /> Add stay payment</button>
+        <div className="stay-breakdown">
+          {stayLedger.people.map((person) => <article className="stay-person" key={person.id}>
+            <span className={`avatar ${person.color}`}>{initials(person.name)}</span><div><strong>{person.name}</strong><small>Paid {money(person.paid)}</small></div><b>{person.due ? `${money(person.due)} due` : 'Covered'}</b>
+          </article>)}
+        </div>
       </section>
 
       <section className="dashboard">
@@ -454,6 +464,7 @@ export default function Page() {
         <div className="main-column">
           <section className="section-block">
             <div className="section-heading"><div><p className="eyebrow">Settle up</p><h2>{ledger.pendingTotal ? 'Who still needs to pay' : 'Who owes whom'}</h2></div><span>{ledger.pendingTotal ? `${money(ledger.pendingTotal)} outstanding` : `${ledger.settlements.length} payment${ledger.settlements.length === 1 ? '' : 's'}`}</span></div>
+            <p className="settlement-note">Stay payments are handled in the accommodation tracker and are excluded here.</p>
             <div className="settlement-list">
               {ledger.pendingTotal ? pendingPayers.map((row) => (
                 <article className="settlement-row" key={row.key}>
