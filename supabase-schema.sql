@@ -26,7 +26,7 @@ create or replace function public.has_trip_access()
 returns boolean language sql security definer stable set search_path = public as $$
   select exists (
     select 1 from public.trip_access
-    where code_hash = encode(digest(coalesce(current_setting('request.headers', true)::json ->> 'x-trip-code', ''), 'sha256'), 'hex')
+    where code_hash = encode(extensions.digest(coalesce(current_setting('request.headers', true)::json ->> 'x-trip-code', ''), 'sha256'), 'hex')
   );
 $$;
 
