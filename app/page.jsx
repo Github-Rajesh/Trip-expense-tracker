@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import {
   ArrowRight,
+  BedDouble,
   CalendarDays,
   Check,
   CircleDollarSign,
@@ -185,9 +186,16 @@ export default function Page() {
   const [syncStatus, setSyncStatus] = useState('connecting');
   const [isSaving, setIsSaving] = useState(false);
   const fileInput = useRef(null);
+  const expensePanelRef = useRef(null);
   const supabaseRef = useRef(null);
 
   const ledger = useMemo(() => computeLedger(trip.expenses), [trip.expenses]);
+  const stayLedger = useMemo(() => {
+    const stays = trip.expenses.filter((expense) => expense.category === 'Stay');
+    const total = stays.reduce((sum, expense) => sum + expense.billAmount, 0);
+    const paid = stays.reduce((sum, expense) => sum + expense.amount, 0);
+    return { total, paid, remaining: Math.max(0, total - paid) };
+  }, [trip.expenses]);
   const latestExpenses = [...trip.expenses].sort((a, b) => `${b.date}${b.id}`.localeCompare(`${a.date}${a.id}`));
   const leadingSettlement = ledger.settlements[0];
 
@@ -252,6 +260,11 @@ export default function Page() {
   function flash(message) {
     setToast(message);
     window.setTimeout(() => setToast(''), 2200);
+  }
+
+  function startStayPayment() {
+    setForm((current) => ({ ...current, category: 'Stay', paymentOnly: stayLedger.total > 0, billAmount: '' }));
+    expensePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   async function addExpense(event) {
@@ -386,8 +399,16 @@ export default function Page() {
         </article>
       </section>
 
+      <section className="stay-tracker" aria-label="Stay payment tracker">
+        <div className="stay-title"><span className="stay-icon"><BedDouble size={19} /></span><div><p className="eyebrow">Accommodation</p><h2>Stay payments</h2></div></div>
+        <div className="stay-stat"><span>Total stay cost</span><strong>{money(stayLedger.total)}</strong></div>
+        <div className="stay-stat"><span>Advance paid</span><strong>{money(stayLedger.paid)}</strong></div>
+        <div className="stay-stat due"><span>Still to pay</span><strong>{money(stayLedger.remaining)}</strong></div>
+        <button className="stay-action" type="button" onClick={startStayPayment}><Plus size={17} /> Add stay payment</button>
+      </section>
+
       <section className="dashboard">
-        <aside className="expense-panel">
+        <aside className="expense-panel" ref={expensePanelRef}>
           <div className="panel-title">
             <p className="eyebrow">New entry</p>
             <h2>Add an expense</h2>
