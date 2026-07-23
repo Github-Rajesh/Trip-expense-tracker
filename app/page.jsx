@@ -9,6 +9,7 @@ import {
   Check,
   CircleDollarSign,
   Download,
+  KeyRound,
   Landmark,
   Plus,
   ReceiptText,
@@ -19,6 +20,7 @@ import {
 } from 'lucide-react';
 
 const STORAGE_KEY = 'velvetember-trip-split:v2';
+const ACCESS_KEY = 'trippu-sultan:trip-code';
 
 const PEOPLE = [
   { id: 'rajesh', name: 'Rajesh', color: 'coral' },
@@ -183,6 +185,8 @@ export default function Page() {
     note: ''
   });
   const [toast, setToast] = useState('');
+  const [accessCode, setAccessCode] = useState(() => localStorage.getItem(ACCESS_KEY) || '');
+  const [codeInput, setCodeInput] = useState('');
   const [syncStatus, setSyncStatus] = useState('connecting');
   const [isSaving, setIsSaving] = useState(false);
   const fileInput = useRef(null);
@@ -212,8 +216,11 @@ export default function Page() {
     .map(([key, balance]) => ({ key, amount: Math.abs(balance) }));
 
   useEffect(() => {
+    if (!accessCode) {
+      setSyncStatus('locked');
+      return undefined;
+    }
     let active = true;
-    let channel;
 
     async function connectSharedLedger() {
       try {
@@ -221,7 +228,7 @@ export default function Page() {
         const config = await response.json();
         if (!config.supabaseUrl || !config.supabasePublishableKey) throw new Error('Missing shared ledger configuration');
 
-        const client = createClient(config.supabaseUrl, config.supabasePublishableKey);
+        const client = createClient(config.supabaseUrl, config.supabasePublishableKey, { global: { headers: { 'x-trip-code': accessCode } } });
         supabaseRef.current = client;
         const { data, error } = await client.from('trip_expenses').select('*').order('created_at', { ascending: false });
         if (error) throw error;
@@ -239,39 +246,30 @@ export default function Page() {
 
         if (!active) return;
         setTrip({ expenses: remoteExpenses });
-        channel = client
-          .channel('trip-expenses')
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'trip_expenses' }, (payload) => {
-            if (!active) return;
-            if (payload.eventType === 'DELETE') {
-              setTrip((current) => ({ ...current, expenses: current.expenses.filter((expense) => expense.id !== payload.old.id) }));
-              return;
-            }
-            const incoming = normalizeExpense(payload.new);
-            setTrip((current) => ({
-              ...current,
-              expenses: [incoming, ...current.expenses.filter((expense) => expense.id !== incoming.id)]
-            }));
-          })
-          .subscribe((status) => {
-            if (!active) return;
-            setSyncStatus(status === 'SUBSCRIBED' ? 'live' : status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' ? 'error' : 'connecting');
-          });
+        setSyncStatus('live');
       } catch {
         if (active) setSyncStatus('error');
       }
     }
 
     connectSharedLedger();
+    const refresh = window.setInterval(connectSharedLedger, 5000);
     return () => {
       active = false;
-      if (channel && supabaseRef.current) supabaseRef.current.removeChannel(channel);
+      window.clearInterval(refresh);
     };
-  }, []);
+  }, [accessCode]);
 
   function flash(message) {
     setToast(message);
     window.setTimeout(() => setToast(''), 2200);
+  }
+
+  function unlock(event) {
+    event.preventDefault();
+    if (!codeInput.trim()) return;
+    localStorage.setItem(ACCESS_KEY, codeInput.trim());
+    setAccessCode(codeInput.trim());
   }
 
   function startStayPayment() {
@@ -367,12 +365,16 @@ export default function Page() {
     reader.readAsText(file);
   }
 
+  if (!accessCode) {
+    return <main className="login-shell"><form className="login-panel" onSubmit={unlock}><span className="login-mark"><KeyRound size={22} /></span><p className="eyebrow">Private trip ledger</p><h1>Trippu Sultan</h1><p>Enter the trip code to view and manage this journey.</p><label>Trip code<input type="password" inputMode="numeric" value={codeInput} onChange={(event) => setCodeInput(event.target.value)} autoFocus /></label><button className="primary-button" type="submit">Unlock trip</button></form></main>;
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
         <a className="brand" href="#top" aria-label="Velvetember trip split">
           <span className="brand-mark"><Landmark size={18} /></span>
-          <span>Velvetember</span>
+          <span>Trippu Sultan</span>
         </a>
         <div className="topbar-actions">
           <button className="icon-button" type="button" onClick={exportData} aria-label="Download backup" title="Download backup"><Download size={18} /></button>
