@@ -196,8 +196,12 @@ export default function Page() {
     const paid = stays.reduce((sum, expense) => sum + expense.amount, 0);
     const share = total / PEOPLE.length;
     const people = PEOPLE.map((person) => {
-      const personPaid = stays.filter((expense) => expense.payer === person.id).reduce((sum, expense) => sum + expense.amount, 0);
-      return { ...person, paid: personPaid, due: Math.max(0, share - personPaid) };
+      const group = SETTLEMENT_GROUPS.find((item) => item.id === GROUP_BY_MEMBER[person.id]);
+      const groupPaid = stays
+        .filter((expense) => GROUP_BY_MEMBER[expense.payer] === group.id)
+        .reduce((sum, expense) => sum + expense.amount, 0);
+      const groupDue = Math.max(0, share * group.members.length - groupPaid);
+      return { ...person, paid: groupPaid, due: groupDue / group.members.length, isPair: group.members.length > 1 };
     });
     return { total, paid, remaining: Math.max(0, total - paid), share, people };
   }, [trip.expenses]);
@@ -415,7 +419,7 @@ export default function Page() {
         <button className="stay-action" type="button" onClick={startStayPayment}><Plus size={17} /> Add stay payment</button>
         <div className="stay-breakdown">
           {stayLedger.people.map((person) => <article className="stay-person" key={person.id}>
-            <span className={`avatar ${person.color}`}>{initials(person.name)}</span><div><strong>{person.name}</strong><small>Paid {money(person.paid)}</small></div><b>{person.due ? `${money(person.due)} due` : 'Covered'}</b>
+            <span className={`avatar ${person.color}`}>{initials(person.name)}</span><div><strong>{person.name}</strong><small>{person.isPair ? `Pair paid ${money(person.paid)}` : `Paid ${money(person.paid)}`}</small></div><b>{person.due ? `${money(person.due)} due` : 'Covered'}</b>
           </article>)}
         </div>
       </section>
