@@ -198,6 +198,9 @@ export default function Page() {
   }, [trip.expenses]);
   const latestExpenses = [...trip.expenses].sort((a, b) => `${b.date}${b.id}`.localeCompare(`${a.date}${a.id}`));
   const leadingSettlement = ledger.settlements[0];
+  const pendingPayers = Object.entries(ledger.groupBalances)
+    .filter(([, balance]) => balance < -0.5)
+    .map(([key, balance]) => ({ key, amount: Math.abs(balance) }));
 
   useEffect(() => {
     let active = true;
@@ -450,9 +453,16 @@ export default function Page() {
 
         <div className="main-column">
           <section className="section-block">
-            <div className="section-heading"><div><p className="eyebrow">Settle up</p><h2>Who owes whom</h2></div><span>{ledger.settlements.length} payment{ledger.settlements.length === 1 ? '' : 's'}</span></div>
+            <div className="section-heading"><div><p className="eyebrow">Settle up</p><h2>{ledger.pendingTotal ? 'Who still needs to pay' : 'Who owes whom'}</h2></div><span>{ledger.pendingTotal ? `${money(ledger.pendingTotal)} outstanding` : `${ledger.settlements.length} payment${ledger.settlements.length === 1 ? '' : 's'}`}</span></div>
             <div className="settlement-list">
-              {ledger.pendingTotal ? <div className="empty-state"><ReceiptText size={22} /><span>{money(ledger.pendingTotal)} remains to be paid on the trip bills.</span></div> : ledger.settlements.length ? ledger.settlements.map((row, index) => (
+              {ledger.pendingTotal ? pendingPayers.map((row) => (
+                <article className="settlement-row" key={row.key}>
+                  <div className="transfer-party"><span className="transfer-avatar">{initials(groupName(row.key))}</span><div><strong>{groupName(row.key)}</strong><small>still needs to pay</small></div></div>
+                  <ArrowRight className="transfer-arrow" size={19} />
+                  <div className="transfer-party"><span className="transfer-avatar receive"><BedDouble size={14} /></span><div><strong>Hotel / pending bills</strong><small>before final settlement</small></div></div>
+                  <b>{money(row.amount)}</b>
+                </article>
+              )) : ledger.settlements.length ? ledger.settlements.map((row, index) => (
                 <article className="settlement-row" key={`${row.from}-${row.to}-${index}`}>
                   <div className="transfer-party"><span className="transfer-avatar">{initials(groupName(row.from))}</span><div><strong>{groupName(row.from)}</strong><small>owes</small></div></div>
                   <ArrowRight className="transfer-arrow" size={19} />
